@@ -24,7 +24,7 @@
 #include "driver/gpio.h"
 
 
-#define NOT_TRACKING_FARSIDE    0
+#define NOT_TRACKING_FARSIDE    false       // TODO: When running an actual antenna, be sure that this marco is TRUE
 #define DELTA_VALUE             0.01
 
 
@@ -35,7 +35,7 @@
 
 typedef struct
 {
-    float az; // Azimuth
+    float az; // Azimuth    // TODO: need to transform the angle to a pluse
     float el; // Elevation
 }AntennaRot;
 
@@ -46,7 +46,9 @@ typedef enum
     RECVIVING,
 }Connect_Status;
 
-void do_retransmit(const int sock);
+int reconnect(int *sock, int addr_family, int ip_protocol, struct sockaddr_storage *dest_addr); 
+
+void do_retransmit(int *sock, int addr_family, int ip_protocol, struct sockaddr_storage *dest_addr); 
 
 void tcp_server_task(void *pvParameters);
 

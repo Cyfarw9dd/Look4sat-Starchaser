@@ -142,10 +142,6 @@ void app_main(void)
 
         LedStatus = CONNECTED;
         LedTimerStarted = xTimerStart(LedTimerHandle, 0);  // Start the timer
-    }
-
-    while (1)
-    {
-        vTaskDelay(portMAX_DELAY);  // TODO:Hold the main thread if the connection error occur.
-    }
+    }   
+    
 }

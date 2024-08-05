@@ -30,7 +30,49 @@ extern unsigned char LedStatus;
 
 static const char *TAG = "example";
 
-void do_retransmit(const int sock)
+int reconnect(int *sock, int addr_family, int ip_protocol, struct sockaddr_storage *dest_addr) 
+{
+    // Close the old socket
+    if (*sock >= 0) {
+        close(*sock);
+        *sock = -1;
+    }
+
+    // Create a new socket
+    *sock = socket(addr_family, SOCK_STREAM, ip_protocol);
+    if (*sock < 0) {
+        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        return -1;
+    }
+
+    int opt = 1;
+    setsockopt(*sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+#if defined(CONFIG_EXAMPLE_IPV4) && defined(CONFIG_EXAMPLE_IPV6)
+    setsockopt(*sock, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt));
+#endif
+
+    // Bind
+    int err = bind(*sock, (struct sockaddr *)dest_addr, sizeof(*dest_addr));
+    if (err != 0) {
+        ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
+        close(*sock);
+        *sock = -1;
+        return -1;
+    }
+
+    err = listen(*sock, 1);
+    if (err != 0) {
+        ESP_LOGE(TAG, "Error occurred during listen: errno %d", errno);
+        close(*sock);
+        *sock = -1;
+        return -1;
+    }
+
+    return 0;
+}
+
+void do_retransmit(int *sock, int addr_family, int ip_protocol, struct sockaddr_storage *dest_addr) 
 {
     AntennaRot *rot_ptr;
     BaseType_t TXStatus;                    
@@ -42,66 +84,63 @@ void do_retransmit(const int sock)
 
     float delta_az, delta_el;
 
-    do
-    {
-        len = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);      
-        if (len < 0)
-        {
+    do {
+        len = recv(*sock, rx_buffer, sizeof(rx_buffer) - 1, 0);      
+        if (len < 0) {
             LedStatus = CONNECTED;
             ESP_LOGE(TAG, "Error occurred during receiving: errno %d", errno);
-        }
-        else if (len == 0)
-        {
+            // reconnect
+            if (reconnect(sock, addr_family, ip_protocol, dest_addr) < 0) {
+                ESP_LOGE(TAG, "Reconnect failed");
+                return;
+            }
+        } else if (len == 0) {
             LedStatus = CONNECTED;
             ESP_LOGW(TAG, "Connection closed");
-        }
-        else
-        {
-            if (uxQueueMessagesWaiting(RotQueueHandler) == 0)
-            {
+            // reconnect
+            if (reconnect(sock, addr_family, ip_protocol, dest_addr) < 0) {
+                ESP_LOGE(TAG, "Reconnect failed");
+                return;
+            }
+        } else {
+            if (uxQueueMessagesWaiting(RotQueueHandler) == 0) {
                 rx_buffer[len] = 0; // Null-terminate whatever is received and treat it like a string
 
                 sscanf(rx_buffer, "\\P %f %f", &curr_az, &curr_el);           // transform data in to type float
-                
+#if (NOT_TRACKING_FARSIDE)                
                 delta_az = curr_az > prev_az ? (curr_az - prev_az) : (prev_az - curr_az);
                 delta_el = curr_el > prev_el ? (curr_el - prev_el) : (prev_el - curr_el);
 
-                // Exclude the condition EL is negative, that's mean the satllite is on the far side of the Earth
-#if (NOT_TRACKING_FARSIDE)
-                if (curr_el >= 0 && prev_el >= 0)
-                {
-                    if (delta_az > DELTA_VALUE || delta_el > DELTA_VALUE)
-                    {
+                if (curr_el >= 0 && prev_el >= 0) {
+                    if (delta_az > DELTA_VALUE || delta_el > DELTA_VALUE) {
 #endif
                         rot_ptr = (AntennaRot *)malloc(sizeof(AntennaRot));
-                        if (rot_ptr != NULL)
-                        {
+                        if (rot_ptr != NULL) {
                             rot_ptr->az = curr_az;
                             rot_ptr->el = curr_el;
                             
                             TXStatus = xQueueSend(RotQueueHandler, &rot_ptr, 0);      // Send a message to a queue
-                            if (TXStatus == pdPASS)
-                            {
+                            if (TXStatus == pdPASS) {
                                 ESP_LOGI(TAG, "send done");
                                 prev_az = curr_az;
                                 prev_el = curr_el;
-                            }
-                            else
-                            {
+                            } else {
                                 ESP_LOGI(TAG, "send failed");
                                 free(rot_ptr);      // Send failed, free the alloced memory
                             }
-                        }
-                        else
+                        } else {
                             ESP_LOGI(TAG, "alloc failed.\n");
+                        }
 #if (NOT_TRACKING_FARSIDE)
                     }
                 }
 #endif
             }
         }
-
     } while (len > 0);
+
+    shutdown(*sock, 0);
+    close(*sock);
 }
 
 void tcp_server_task(void *pvParameters)
@@ -203,7 +242,7 @@ void tcp_server_task(void *pvParameters)
 #endif
         ESP_LOGI(TAG, "Socket accepted ip address: %s", addr_str);
 
-        do_retransmit(sock);
+        do_retransmit(&sock, addr_family, ip_protocol, &dest_addr);
         // After transmision is over, close the socket and free the memory.
         shutdown(sock, 0);
         close(sock);

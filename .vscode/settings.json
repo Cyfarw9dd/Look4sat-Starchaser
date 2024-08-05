@@ -10,6 +10,8 @@
     "timers.h": "c",
     "rmt_tx.h": "c",
     "tcp_server.h": "c",
-    "queue.h": "c"
+    "queue.h": "c",
+    "functional": "c",
+    "protocol_examples_common.h": "c"
   }
 }
